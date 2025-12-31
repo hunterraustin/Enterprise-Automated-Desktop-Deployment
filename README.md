@@ -31,7 +31,22 @@ Successfully PXE booted a blank Virtual Machine client. The client received an I
 
 ![Deployment Success](pxe_success.png)
 
-## 🔧 Troubleshooting & Challenges
-- **Issue:** Client VM failed to find a boot filename during PXE.
-- **Resolution:** Verified WDS service status and adjusted DHCP Option 60 (PXEClient) since DHCP and WDS were hosted on the same server.
-- **Optimization:** Implemented a "SkipWelcome" rule in `CustomSettings.ini` to remove the initial "Welcome to MDT" prompt, saving 2 clicks per deployment.
+## 🔧 Troubleshooting & Challenges (The Real Work)
+This project simulated a complex network environment where I encountered and resolved several real-world infrastructure issues:
+
+### 1. DHCP Contention & "Split Scope" Logic
+* **Issue:** The client VM was successfully pulling an IP address but failing to locate the WDS Server.
+* **Root Cause:** My home network router was responding to DHCP requests faster than my Windows Server, providing an IP address without the necessary PXE boot instructions (Options 66/67).
+* **Resolution:** I installed the **DHCP Server Role** on the Windows Server and created a dedicated scope (`192.168.x.200 - .210`). I then authorized the server in AD to prioritize it over the home router for local PXE requests.
+
+### 2. WDS/DHCP Port Conflict & Option 60
+* **Issue:** Encountered Error `0xC1040103` when attempting to configure DHCP Option 60 via PowerShell.
+* **Resolution:** Diagnosed that the DHCP Service was not yet installed, causing WDS configuration commands to fail. After installing the DHCP role, I configured WDS to **"Listen on DHCP Ports"** and correctly set Option 60 (PXEClient) to ensure the server announced itself as a boot server.
+
+### 3. PXE Timeout & Zero-Touch Automation
+* **Issue:** The deployment would abort with "PXE Boot Aborted" because the `Press F12` timeout window was too short for the virtual console latency.
+* **Resolution:** Modified the **WDS Boot Policy** for "Unknown Clients" to **"Always continue the PXE boot."** This removed the manual F12 requirement entirely, achieving true "Zero-Touch" automation.
+
+### 4. Firewall Traffic Blocking
+* **Issue:** TFTP (Trivial File Transfer Protocol) traffic was being blocked, causing the boot image download to hang.
+* **Resolution:** Identified that Windows Server 2022 defaults the Firewall to "On" for Domain networks. I created exception rules for UDP Port 67 (DHCP) and Port 69 (TFTP) to allow the boot traffic to pass.
