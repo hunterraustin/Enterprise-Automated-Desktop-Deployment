@@ -1,52 +1,51 @@
-# Enterprise-Automated-Desktop-Deployment
+# Hands-Free Windows Deployment with MDT and WDS
 
-## 🎯 Objective
-To replace manual, time-consuming workstation setups with a standardized, "Zero-Touch" imaging solution. This project utilizes **Windows Deployment Services (WDS)** and **Microsoft Deployment Toolkit (MDT)** to PXE boot bare-metal clients and automatically deploy a custom Windows 10/11 Enterprise image with drivers and applications pre-configured.
+Bare-metal Windows 10/11 Enterprise deployment over PXE. A blank machine boots from the network, pulls the MDT boot image from WDS, and runs a task sequence that partitions the disk, installs Windows, injects drivers, and joins the domain without anyone touching it.
 
-## 🛠 Skills Applied
-- **Systems Administration:** Configured WDS to handle PXE (Preboot Execution Environment) requests and DHCP integration.
-- **Image Management:** Created "Golden Images" using MDT, managing Operating System .wim files and driver injection.
-- **Task Sequence Automation:** Built custom Task Sequences to automate partitioning, domain joining, and local admin creation.
-- **Infrastructure Standardization:** Enforced consistent OS configurations across all endpoints to reduce support ticket volume.
+## Stack
 
-## 💻 Technologies
-- **Platform:** Windows Server 2022 (Standard)
-- **Tools:** Microsoft Deployment Toolkit (MDT), Windows Deployment Services (WDS), Windows ADK (Assessment & Deployment Kit)
-- **Client OS:** Windows 10/11 Enterprise
+- Windows Server 2022 Standard running WDS and DHCP
+- Microsoft Deployment Toolkit (MDT) and the Windows ADK
+- Windows 10/11 Enterprise clients, tested on a blank VM
 
-## 📝 Project Workflow
+## Build
 
-### 1. MDT Workbench Configuration
-Established the `DeploymentShare` directory structure and imported the base Windows operating system files. Created a "Standard Client Task Sequence" to define the installation logic (Partition Disk -> Install OS -> Inject Drivers -> Join Domain).
+### 1. MDT deployment share
+Created the `DeploymentShare`, imported the Windows source files, and built a standard client task sequence: partition disk, install OS, inject drivers, join domain.
 
-![MDT Configuration](mdt_config.png)
+![MDT configuration](mdt_config.png)
 
-### 2. WDS & Boot Image Integration
-Generated a custom `LiteTouchPE_x64.wim` boot image within MDT and imported it into the WDS Boot Images repository. Configured the WDS Responder to listen for PXE requests from unknown clients on the network.
+### 2. Boot image in WDS
+Generated `LiteTouchPE_x64.wim` in MDT, added it to the WDS boot images, and set WDS to answer PXE requests from unknown clients.
 
-![WDS Configuration](wds_ready.png)
+![WDS configuration](wds_ready.png)
 
-### 3. Execution (PXE Boot & Deployment)
-Successfully PXE booted a blank Virtual Machine client. The client received an IP from DHCP, loaded the MDT Boot Image, and executed the Task Sequence to install Windows completely hands-free.
+### 3. PXE deployment
+PXE booted a blank VM. It got an address from DHCP, loaded the MDT boot image, and ran the task sequence through to a finished install with no input.
 
-![Deployment Success](pxe_success.png)
+![Deployment success](pxe_success.png)
 
-## 🔧 Troubleshooting & Challenges (The Real Work)
-This project simulated a complex network environment where I encountered and resolved several real-world infrastructure issues:
+## Problems I hit and how I fixed them
 
-### 1. DHCP Contention & "Split Scope" Logic
-* **Issue:** The client VM was successfully pulling an IP address but failing to locate the WDS Server.
-* **Root Cause:** My home network router was responding to DHCP requests faster than my Windows Server, providing an IP address without the necessary PXE boot instructions (Options 66/67).
-* **Resolution:** I installed the **DHCP Server Role** on the Windows Server and created a dedicated scope (`192.168.x.200 - .210`). I then authorized the server in AD to prioritize it over the home router for local PXE requests.
+### Competing DHCP servers
+- **Symptom:** The client got an IP address but never found the WDS server.
+- **Cause:** My home router's DHCP answered first, and its offer had no PXE boot information (options 66/67).
+- **Fix:** Installed the DHCP role on the Windows server with a dedicated scope (`192.168.x.200-.210`) carrying the boot options, and authorized it in AD.
+- **Note:** Authorizing a DHCP server in AD doesn't make it win. It only allows a Windows DHCP server to start in the domain, and two DHCP servers on one subnet is a race. In production I'd keep one DHCP server per subnet and forward PXE requests to WDS with IP helpers.
 
-### 2. WDS/DHCP Port Conflict & Option 60
-* **Issue:** Encountered Error `0xC1040103` when attempting to configure DHCP Option 60 via PowerShell.
-* **Resolution:** Diagnosed that the DHCP Service was not yet installed, causing WDS configuration commands to fail. After installing the DHCP role, I configured WDS to **"Listen on DHCP Ports"** and correctly set Option 60 (PXEClient) to ensure the server announced itself as a boot server.
+### WDS and DHCP on the same server
+- **Symptom:** Error `0xC1040103` when setting DHCP option 60 from PowerShell.
+- **Cause:** The DHCP Server role wasn't installed yet, so the WDS configuration command failed.
+- **Fix:** Installed DHCP, then set WDS to "Do not listen on DHCP ports" (UDP 67 belongs to the DHCP service when both run on one server) and set option 60 to `PXEClient` so clients know a PXE server is present.
 
-### 3. PXE Timeout & Zero-Touch Automation
-* **Issue:** The deployment would abort with "PXE Boot Aborted" because the `Press F12` timeout window was too short for the virtual console latency.
-* **Resolution:** Modified the **WDS Boot Policy** for "Unknown Clients" to **"Always continue the PXE boot."** This removed the manual F12 requirement entirely, achieving true "Zero-Touch" automation.
+### PXE timeout
+- **Symptom:** "PXE Boot Aborted" because the press-F12 window closed before the virtual console caught up.
+- **Fix:** Changed the WDS boot policy for unknown clients to "Always continue the PXE boot," which removed the F12 prompt.
 
-### 4. Firewall Traffic Blocking
-* **Issue:** TFTP (Trivial File Transfer Protocol) traffic was being blocked, causing the boot image download to hang.
-* **Resolution:** Identified that Windows Server 2022 defaults the Firewall to "On" for Domain networks. I created exception rules for UDP Port 67 (DHCP) and Port 69 (TFTP) to allow the boot traffic to pass.
+### Firewall blocking TFTP
+- **Symptom:** The boot image download hung.
+- **Cause:** Windows Defender Firewall was on for the domain profile.
+- **Fix:** Allowed UDP 67 (DHCP) and UDP 69 (TFTP) inbound.
+
+## Terminology note
+Standalone MDT is Lite Touch; the boot image is literally named `LiteTouchPE`. Microsoft reserves "Zero Touch" for MDT integrated with Configuration Manager. This build is Lite Touch with the wizard automated, so it runs hands-free.
